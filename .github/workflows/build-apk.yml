@@ -50,6 +50,26 @@ jobs:
             npx cap add android
           fi
 
+      - name: Configure AndroidManifest for AdMob and Permissions
+        run: |
+          python3 -c "
+          p = 'android/app/src/main/AndroidManifest.xml'
+          with open(p, 'r') as f:
+              c = f.read()
+          if 'com.google.android.gms.ads.APPLICATION_ID' not in c:
+              meta = '''        <meta-data
+                  android:name=\"com.google.android.gms.ads.APPLICATION_ID\"
+                  android:value=\"ca-app-pub-3877753844959715~4589245523\"/>
+              <meta-data
+                  android:name=\"com.google.android.gms.ads.DELAY_APP_MEASUREMENT_INIT\"
+                  android:value=\"true\"/>'''
+              c = c.replace('</application>', meta + '\n    </application>')
+          if 'usesCleartextTraffic' not in c:
+              c = c.replace('<application', '<application android:usesCleartextTraffic=\"true\"')
+          with open(p, 'w') as f:
+              f.write(c)
+          "
+
       - name: Generate and apply Funtok app logo
         run: |
           sudo apt-get update && sudo apt-get install -y librsvg2-bin
