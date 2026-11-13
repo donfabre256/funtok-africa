@@ -16,6 +16,19 @@ type Props = {
   className?: string;
 };
 
+// Cache posters and assets locally for offline playback
+async function cacheAsset(url?: string) {
+  if (!url || typeof window === "undefined" || !("caches" in window)) return;
+  try {
+    const cache = await caches.open("funtok-media-v1");
+    const match = await cache.match(url);
+    if (!match) {
+      const res = await fetch(url, { mode: "cors" });
+      if (res.ok) await cache.put(url, res);
+    }
+  } catch {}
+}
+
 export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onTap, onDoubleTap, onLongPress, tapToPause = false, onWatch, className }: Props) {
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
@@ -24,6 +37,7 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
   const startPoint = useRef({ x: 0, y: 0 });
   const clearHold = () => { if (holdTimer.current) clearTimeout(holdTimer.current); holdTimer.current = null; };
   useEffect(() => () => clearHold(), []);
+
   const singleTap = () => {
     if (!tapToPause) { onTap?.(); return; }
     pausedRef.current = !pausedRef.current;
@@ -31,8 +45,10 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
     if (pausedRef.current) ref.current?.pause();
     else if (activeRef.current) void ref.current?.play().catch(() => undefined);
   };
+
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (tapTimer.current) clearTimeout(tapTimer.current); tapTimer.current = null; }, [active]);
+
   const handleTap = () => {
     if (suppressClick.current) { suppressClick.current = false; return; }
     if (!onDoubleTap) { singleTap(); return; }
@@ -44,6 +60,7 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
       tapTimer.current = setTimeout(() => { tapTimer.current = null; singleTap(); }, 280);
     }
   };
+
   const ref = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<import("hls.js").default | null>(null);
   const activeRef = useRef(active);
@@ -55,6 +72,13 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
   const watchRef = useRef(onWatch);
   watchRef.current = onWatch;
 
+  // Pre-cache poster image for offline view
+  useEffect(() => {
+    if (poster && (active || prebuffer)) {
+      void cacheAsset(poster);
+    }
+  }, [poster, active, prebuffer]);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -63,13 +87,14 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
     let cancelled = false;
     const playWhenReady = () => { if (activeRef.current && !pausedRef.current) void el.play().catch(() => undefined); };
     el.addEventListener("loadeddata", playWhenReady);
+
     if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = src;
     } else {
       loadHls().then(({ default: Hls }) => {
         if (cancelled) return;
         if (Hls.isSupported()) {
-          const h = new Hls({ autoStartLoad: false, maxBufferLength: 8, maxMaxBufferLength: 12, backBufferLength: 2 });
+          const h = new Hls({ autoStartLoad: false, maxBufferLength: 10, maxMaxBufferLength: 16, backBufferLength: 4 });
           hlsRef.current = h;
           h.loadSource(src);
           h.attachMedia(el);
@@ -105,7 +130,7 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
       const t = el.currentTime;
       const d = el.duration || 0;
       if (t > last && t - last < 2) watched += t - last;
-      if (t < last) maxPct = 100; // looped
+      if (t < last) maxPct = 100;
       last = t;
       if (d) maxPct = Math.max(maxPct, (t / d) * 100);
     };
@@ -132,21 +157,21 @@ export function VideoPlayer({ src, poster, active, prebuffer = false, muted, onT
       onPointerMove={(event) => { if (Math.hypot(event.clientX - startPoint.current.x, event.clientY - startPoint.current.y) > 12) { clearHold(); suppressClick.current = true; } }}
       onPointerUp={clearHold} onPointerCancel={() => { clearHold(); suppressClick.current = true; }}
       onContextMenu={(event) => { if (onLongPress) { event.preventDefault(); clearHold(); suppressClick.current = true; onLongPress(); } }}>
-    <video
-      ref={ref}
-      poster={poster}
-      loop
-      playsInline
-      muted={muted}
-      preload={active || prebuffer ? "auto" : "none"}
-      onPlaying={() => setPlaying(true)}
-      onWaiting={() => setPlaying(false)}
-      onError={() => setPlaying(false)}
-      className={className ?? "h-full w-full object-cover"}
-    />
-    {poster && !playing && !paused && !posterFailed && <img src={poster} alt="" draggable={false} decoding="async" fetchPriority={active || prebuffer ? "high" : "low"} onError={() => setPosterFailed(true)} className="absolute inset-0 h-full w-full object-cover" />}
-    {!playing && posterFailed && <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-card text-muted-foreground"><Video className="h-12 w-12" /><span className="text-sm">Video unavailable</span></div>}
-    {paused && <div role="status" aria-label="Video paused" className="pointer-events-none absolute inset-0 flex items-center justify-center"><Play className="h-16 w-16 fill-foreground text-foreground drop-shadow-lg" /></div>}
+      <video
+        ref={ref}
+        poster={poster}
+        loop
+        playsInline
+        muted={muted}
+        preload={active || prebuffer ? "auto" : "none"}
+        onPlaying={() => setPlaying(true)}
+        onWaiting={() => setPlaying(false)}
+        onError={() => setPlaying(false)}
+        className={className ?? "h-full w-full object-cover"}
+      />
+      {poster && !playing && !paused && !posterFailed && <img src={poster} alt="" draggable={false} decoding="async" fetchPriority={active || prebuffer ? "high" : "low"} onError={() => setPosterFailed(true)} className="absolute inset-0 h-full w-full object-cover" />}
+      {!playing && posterFailed && <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-card text-muted-foreground"><Video className="h-12 w-12" /><span className="text-sm">Video unavailable</span></div>}
+      {paused && <div role="status" aria-label="Video paused" className="pointer-events-none absolute inset-0 flex items-center justify-center"><Play className="h-16 w-16 fill-foreground text-foreground drop-shadow-lg" /></div>}
     </div>
   );
 }
